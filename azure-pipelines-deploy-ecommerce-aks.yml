@@ -1,0 +1,272 @@
+name: ecommerce-aks-deploy-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+parameters:
+- name: serviceConnection
+  displayName: Azure Service Connection Name
+  type: string
+  default: sc-azure-terraform
+
+- name: clusterResourceGroup
+  displayName: AKS Resource Group
+  type: string
+  default: rg-microservices-dev-cin-dpu6
+
+- name: clusterName
+  displayName: AKS Cluster Name
+  type: string
+  default: aks-microservices-dev-cin-dpu6
+
+- name: nodePoolName
+  displayName: AKS User Node Pool Name
+  type: string
+  default: user
+
+- name: nodePoolDesiredCount
+  displayName: User Node Pool Desired Node Count
+  type: number
+  default: 2
+
+- name: nodePoolMinCount
+  displayName: User Node Pool Min Count
+  type: number
+  default: 2
+
+- name: nodePoolMaxCount
+  displayName: User Node Pool Max Count
+  type: number
+  default: 2
+
+- name: scaleNodePool
+  displayName: Scale user node pool before deploy
+  type: boolean
+  default: true
+
+- name: namespace
+  displayName: Kubernetes Namespace
+  type: string
+  default: ecommerce
+
+- name: domainName
+  displayName: Domain (e.g. hotelreservationweb.me)
+  type: string
+  default: hotelreservationweb.me
+
+- name: repoUrl
+  displayName: Ecommerce repo URL
+  type: string
+  default: https://github.com/thasup/microservices-ecommerce.git
+
+- name: repoRef
+  displayName: Ecommerce repo ref (branch or tag)
+  type: string
+  default: main
+
+- name: mongoUriUser
+  displayName: MONGO_URI_USER
+  type: string
+  default: mongodb://user-mongo-srv:27017/user
+
+- name: mongoUriProduct
+  displayName: MONGO_URI_PRODUCT
+  type: string
+  default: mongodb://product-mongo-srv:27017/product
+
+- name: mongoUriOrder
+  displayName: MONGO_URI_ORDER
+  type: string
+  default: mongodb://order-mongo-srv:27017/order
+
+- name: mongoUriPayment
+  displayName: MONGO_URI_PAYMENT
+  type: string
+  default: mongodb://payment-mongo-srv:27017/payment
+
+- name: jwtKey
+  displayName: JWT_KEY
+  type: string
+  default: placeholder-jwt-key
+
+- name: stripeKey
+  displayName: STRIPE_KEY
+  type: string
+  default: placeholder-stripe-key
+
+- name: paypalClientId
+  displayName: PAYPAL_CLIENT_ID
+  type: string
+  default: placeholder-paypal-client-id
+
+variables:
+- name: OWNER_LABEL
+  value: sonali-gupta
+
+stages:
+- stage: DeployEcommerce
+  displayName: Deploy Ecommerce to AKS
+  jobs:
+  - job: Deploy
+    displayName: Apply ecommerce manifests
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Connect AKS and deploy ecommerce manifests
+      inputs:
+        azureSubscription: ${{ parameters.serviceConnection }}
+        addSpnToEnvironment: true
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          az aks nodepool list \
+            --resource-group "${{ parameters.clusterResourceGroup }}" \
+            --cluster-name "${{ parameters.clusterName }}" \
+            -o table
+
+          NODEPOOL_NAME="${{ parameters.nodePoolName }}"
+          if [[ -n "$NODEPOOL_NAME" ]]; then
+            if ! az aks nodepool show \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --name "$NODEPOOL_NAME" >/dev/null 2>&1; then
+              echo "##vso[task.logissue type=warning]Node pool '$NODEPOOL_NAME' not found. Auto-detecting a user pool."
+              NODEPOOL_NAME=""
+            fi
+          fi
+
+          if [[ -z "$NODEPOOL_NAME" ]]; then
+            NODEPOOL_NAME="$(az aks nodepool list \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --query "[?mode=='User'].name | [0]" -o tsv)"
+          fi
+
+          if [[ -z "$NODEPOOL_NAME" ]]; then
+            echo "##vso[task.logissue type=error]No user node pool found to scale."
+            exit 1
+          fi
+
+          echo "Using node pool: $NODEPOOL_NAME"
+
+          SCALE_NODEPOOL="${{ parameters.scaleNodePool }}"
+          echo "scaleNodePool=$SCALE_NODEPOOL"
+          if [[ "${SCALE_NODEPOOL,,}" == "true" ]]; then
+            DESIRED_COUNT="${{ parameters.nodePoolDesiredCount }}"
+            TARGET_MIN_COUNT="${{ parameters.nodePoolMinCount }}"
+            if [[ "$DESIRED_COUNT" -gt "$TARGET_MIN_COUNT" ]]; then
+              TARGET_MIN_COUNT="$DESIRED_COUNT"
+            fi
+
+            az aks nodepool update \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --name "$NODEPOOL_NAME" \
+              --enable-cluster-autoscaler \
+              --min-count "$TARGET_MIN_COUNT" \
+              --max-count "${{ parameters.nodePoolMaxCount }}"
+
+            SCALE_TIMEOUT_MINUTES=15
+            SCALE_WAIT_SECONDS=20
+            MAX_ATTEMPTS=$((SCALE_TIMEOUT_MINUTES * 60 / SCALE_WAIT_SECONDS))
+
+            for _ in $(seq 1 "$MAX_ATTEMPTS"); do
+              CURRENT_COUNT="$(az aks nodepool show \
+                --resource-group "${{ parameters.clusterResourceGroup }}" \
+                --cluster-name "${{ parameters.clusterName }}" \
+                --name "$NODEPOOL_NAME" \
+                --query "count" -o tsv)"
+              PROVISIONING_STATE="$(az aks nodepool show \
+                --resource-group "${{ parameters.clusterResourceGroup }}" \
+                --cluster-name "${{ parameters.clusterName }}" \
+                --name "$NODEPOOL_NAME" \
+                --query "provisioningState" -o tsv)"
+
+              if [[ -n "$CURRENT_COUNT" && "$CURRENT_COUNT" -ge "$TARGET_MIN_COUNT" && "$PROVISIONING_STATE" == "Succeeded" ]]; then
+                echo "Node pool scaled to $CURRENT_COUNT nodes."
+                break
+              fi
+
+              echo "Waiting for node pool to scale (current=$CURRENT_COUNT, min=$TARGET_MIN_COUNT, state=$PROVISIONING_STATE)..."
+              sleep "$SCALE_WAIT_SECONDS"
+            done
+
+            if [[ -z "$CURRENT_COUNT" || "$CURRENT_COUNT" -lt "$TARGET_MIN_COUNT" ]]; then
+              echo "##vso[task.logissue type=error]Node pool did not scale to desired count in time."
+              exit 1
+            fi
+          fi
+
+          az aks get-credentials \
+            --resource-group "${{ parameters.clusterResourceGroup }}" \
+            --name "${{ parameters.clusterName }}" \
+            --overwrite-existing
+
+          NAMESPACE="${{ parameters.namespace }}"
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace "$NAMESPACE" owner="$(OWNER_LABEL)" --overwrite
+
+          kubectl create secret generic mongo-secret -n "$NAMESPACE" \
+            --from-literal=MONGO_URI_USER="${{ parameters.mongoUriUser }}" \
+            --from-literal=MONGO_URI_PRODUCT="${{ parameters.mongoUriProduct }}" \
+            --from-literal=MONGO_URI_ORDER="${{ parameters.mongoUriOrder }}" \
+            --from-literal=MONGO_URI_PAYMENT="${{ parameters.mongoUriPayment }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic jwt-secret -n "$NAMESPACE" \
+            --from-literal=JWT_KEY="${{ parameters.jwtKey }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic stripe-secret -n "$NAMESPACE" \
+            --from-literal=STRIPE_KEY="${{ parameters.stripeKey }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic paypal-secret -n "$NAMESPACE" \
+            --from-literal=PAYPAL_CLIENT_ID="${{ parameters.paypalClientId }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          WORKDIR="$(Build.SourcesDirectory)/_ecommerce"
+          rm -rf "$WORKDIR"
+          git clone --depth 1 --branch "${{ parameters.repoRef }}" "${{ parameters.repoUrl }}" "$WORKDIR"
+
+          INGRESS_FILE="$WORKDIR/infra/k8s-dev/ingress-srv.yaml"
+          if [[ -f "$INGRESS_FILE" ]]; then
+            sed -i "s/^[[:space:]]*- host: .*/  - host: ${{ parameters.domainName }}/" "$INGRESS_FILE"
+          else
+            echo "##vso[task.logissue type=error]Ingress file not found: $INGRESS_FILE"
+            exit 1
+          fi
+
+          kubectl apply -f "$WORKDIR/infra/k8s" -n "$NAMESPACE"
+          kubectl apply -f "$WORKDIR/infra/k8s-dev" -n "$NAMESPACE"
+
+          echo "Waiting for ingress external endpoint..."
+          INGRESS_ENDPOINT=""
+          for _ in $(seq 1 60); do
+            INGRESS_ENDPOINT="$(kubectl get ingress ingress-service -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' || true)"
+            if [[ -n "$INGRESS_ENDPOINT" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ -z "$INGRESS_ENDPOINT" ]]; then
+            echo "##vso[task.logissue type=error]Ingress endpoint was not assigned in time."
+            exit 1
+          fi
+
+          echo "##vso[task.setvariable variable=INGRESS_ENDPOINT]$INGRESS_ENDPOINT"
+          echo "Ingress endpoint: $INGRESS_ENDPOINT"
+
+    - bash: |
+        set -euo pipefail
+        echo "Deployment completed."
+        echo "Ingress endpoint: $(INGRESS_ENDPOINT)"
+        echo "Domain: ${{ parameters.domainName }}"
+        echo "Create a DNS A record pointing ${{ parameters.domainName }} to $(INGRESS_ENDPOINT)."
+      displayName: Print endpoint and DNS info
