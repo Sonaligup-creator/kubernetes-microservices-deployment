@@ -96,7 +96,7 @@ stages:
           echo "Checking compute quota in ${{ variables.LOCATION }}..."
           az vm list-usage \
             --location "${{ variables.LOCATION }}" \
-            --query "[?contains(to_lower(name.value), 'dsv3') || contains(to_lower(name.value), 'd2s') || contains(to_lower(name.value), 'totalregionalvcpus')].{name:name.localizedValue, currentValue:currentValue, limit:limit}" \
+            --query "[?contains(tolower(name.value), 'dsv3') || contains(tolower(name.value), 'd2s') || contains(tolower(name.value), 'totalregionalvcpus')].{name:name.localizedValue, currentValue:currentValue, limit:limit}" \
             -o table
 
           echo "Checking SKU availability for Standard_D2s_v3 in ${{ variables.LOCATION }}..."
