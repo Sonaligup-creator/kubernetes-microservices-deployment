@@ -126,21 +126,20 @@ stages:
           SCALE_NODEPOOL="${{ parameters.scaleNodePool }}"
           echo "scaleNodePool=$SCALE_NODEPOOL"
           if [[ "${SCALE_NODEPOOL,,}" == "true" ]]; then
+            DESIRED_COUNT="${{ parameters.nodePoolDesiredCount }}"
+            TARGET_MIN_COUNT="${{ parameters.nodePoolMinCount }}"
+            if [[ "$DESIRED_COUNT" -gt "$TARGET_MIN_COUNT" ]]; then
+              TARGET_MIN_COUNT="$DESIRED_COUNT"
+            fi
+
             az aks nodepool update \
               --resource-group "${{ parameters.clusterResourceGroup }}" \
               --cluster-name "${{ parameters.clusterName }}" \
               --name "$NODEPOOL_NAME" \
               --enable-cluster-autoscaler \
-              --min-count "${{ parameters.nodePoolMinCount }}" \
+              --min-count "$TARGET_MIN_COUNT" \
               --max-count "${{ parameters.nodePoolMaxCount }}"
 
-            az aks nodepool scale \
-              --resource-group "${{ parameters.clusterResourceGroup }}" \
-              --cluster-name "${{ parameters.clusterName }}" \
-              --name "$NODEPOOL_NAME" \
-              --node-count "${{ parameters.nodePoolDesiredCount }}"
-
-            DESIRED_COUNT="${{ parameters.nodePoolDesiredCount }}"
             SCALE_TIMEOUT_MINUTES=15
             SCALE_WAIT_SECONDS=20
             MAX_ATTEMPTS=$((SCALE_TIMEOUT_MINUTES * 60 / SCALE_WAIT_SECONDS))
@@ -157,16 +156,16 @@ stages:
                 --name "$NODEPOOL_NAME" \
                 --query "provisioningState" -o tsv)"
 
-              if [[ -n "$CURRENT_COUNT" && "$CURRENT_COUNT" -ge "$DESIRED_COUNT" && "$PROVISIONING_STATE" == "Succeeded" ]]; then
+              if [[ -n "$CURRENT_COUNT" && "$CURRENT_COUNT" -ge "$TARGET_MIN_COUNT" && "$PROVISIONING_STATE" == "Succeeded" ]]; then
                 echo "Node pool scaled to $CURRENT_COUNT nodes."
                 break
               fi
 
-              echo "Waiting for node pool to scale (current=$CURRENT_COUNT, desired=$DESIRED_COUNT, state=$PROVISIONING_STATE)..."
+              echo "Waiting for node pool to scale (current=$CURRENT_COUNT, min=$TARGET_MIN_COUNT, state=$PROVISIONING_STATE)..."
               sleep "$SCALE_WAIT_SECONDS"
             done
 
-            if [[ -z "$CURRENT_COUNT" || "$CURRENT_COUNT" -lt "$DESIRED_COUNT" ]]; then
+            if [[ -z "$CURRENT_COUNT" || "$CURRENT_COUNT" -lt "$TARGET_MIN_COUNT" ]]; then
               echo "##vso[task.logissue type=error]Node pool did not scale to desired count in time."
               exit 1
             fi
