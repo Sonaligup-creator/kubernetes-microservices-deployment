@@ -44,6 +44,30 @@ parameters:
   type: boolean
   default: true
 
+variables:
+- name: ACR_LOGIN_SERVER
+  value: microservicesdevcindpu6.azurecr.io
+- name: ACR_NAME
+  value: microservicesdevcindpu6
+- name: AKS_FQDN
+  value: dns-microservices-dev-cin-dpu6-wpje318p.hcp.centralindia.azmk8s.io
+- name: AKS_ID
+  value: /subscriptions/d4f8a684-0209-4748-b23f-67899b0539bb/resourceGroups/rg-microservices-dev-cin-dpu6/providers/Microsoft.ContainerService/managedClusters/aks-microservices-dev-cin-dpu6
+- name: AKS_NAME
+  value: aks-microservices-dev-cin-dpu6
+- name: AKS_NODE_RESOURCE_GROUP
+  value: MC_rg-microservices-dev-cin-dpu6_aks-microservices-dev-cin-dpu6_centralindia
+- name: AKS_OIDC_ISSUER_URL
+  value: https://centralindia.oic.prod-aks.azure.com/bb7cfe3b-bc9c-4d54-80b3-2ae61dd8358d/7a447bac-4f37-441a-be95-c543b88d9d9f/
+- name: AKS_SUBNET_ID
+  value: /subscriptions/d4f8a684-0209-4748-b23f-67899b0539bb/resourceGroups/rg-microservices-dev-cin-dpu6/providers/Microsoft.Network/virtualNetworks/vnet-microservices-dev-cin-dpu6/subnets/snet-aks
+- name: LOCATION
+  value: centralindia
+- name: RESOURCE_GROUP_NAME
+  value: rg-microservices-dev-cin-dpu6
+- name: VNET_NAME
+  value: vnet-microservices-dev-cin-dpu6
+
 - name: namespace
   displayName: Kubernetes Namespace
   type: string
