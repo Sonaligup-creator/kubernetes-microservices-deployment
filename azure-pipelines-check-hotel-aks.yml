@@ -1,0 +1,50 @@
+name: hotel-aks-check-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+parameters:
+- name: serviceConnection
+  displayName: Azure Service Connection Name
+  type: string
+  default: sc-azure-terraform
+
+- name: clusterResourceGroup
+  displayName: AKS Resource Group
+  type: string
+  default: rg-microservices-dev-cin-dpu6
+
+- name: clusterName
+  displayName: AKS Cluster Name
+  type: string
+  default: aks-microservices-dev-cin-dpu6
+
+- name: namespace
+  displayName: Kubernetes Namespace
+  type: string
+  default: hotel-res
+
+stages:
+- stage: CheckHotelReservation
+  displayName: Check HotelReservation on AKS
+  jobs:
+  - job: Check
+    displayName: Validate service, pods, and endpoint
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Run AKS validation script
+      inputs:
+        azureSubscription: ${{ parameters.serviceConnection }}
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+          chmod +x scripts/check-hotel-aks.sh
+          ./scripts/check-hotel-aks.sh \
+            "${{ parameters.clusterResourceGroup }}" \
+            "${{ parameters.clusterName }}" \
+            "${{ parameters.namespace }}"

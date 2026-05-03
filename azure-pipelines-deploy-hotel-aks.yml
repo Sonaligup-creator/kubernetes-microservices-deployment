@@ -1,0 +1,121 @@
+name: hotel-aks-deploy-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+parameters:
+- name: serviceConnection
+  displayName: Azure Service Connection Name
+  type: string
+  default: sc-azure-terraform
+
+- name: clusterResourceGroup
+  displayName: AKS Resource Group
+  type: string
+  default: rg-microservices-dev-cin-1jd9
+
+- name: clusterName
+  displayName: AKS Cluster Name
+  type: string
+  default: aks-microservices-dev-cin-1jd9
+
+- name: namespace
+  displayName: Kubernetes Namespace
+  type: string
+  default: hotel-res
+
+- name: domainName
+  displayName: Domain (optional, e.g. app.example.com)
+  type: string
+  default: "hotelreservationweb.me"
+
+stages:
+- stage: DeployHotelReservation
+  displayName: Deploy HotelReservation to AKS
+  jobs:
+  - job: Deploy
+    displayName: Apply Kubernetes manifests and expose frontend
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Connect AKS and deploy manifests
+      inputs:
+        azureSubscription: ${{ parameters.serviceConnection }}
+        addSpnToEnvironment: true
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          az aks get-credentials \
+            --resource-group "${{ parameters.clusterResourceGroup }}" \
+            --name "${{ parameters.clusterName }}" \
+            --overwrite-existing
+
+          kubectl create namespace "${{ parameters.namespace }}" --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl apply -R -f "$(Build.SourcesDirectory)/hotelReservation/kubernetes" -n "${{ parameters.namespace }}"
+
+          # Keep internal frontend service as-is and create a dedicated public LB service on port 80.
+          cat <<'EOF' | kubectl apply -n "${{ parameters.namespace }}" -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: frontend-public
+          spec:
+            type: LoadBalancer
+            selector:
+              io.kompose.service: frontend
+            ports:
+            - name: http
+              port: 80
+              targetPort: 5000
+          EOF
+
+          echo "Waiting for frontend external endpoint..."
+          FRONTEND_IP=""
+          FRONTEND_HOSTNAME=""
+
+          for _ in $(seq 1 60); do
+            FRONTEND_IP="$(kubectl get service frontend-public -n "${{ parameters.namespace }}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)"
+            FRONTEND_HOSTNAME="$(kubectl get service frontend-public -n "${{ parameters.namespace }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true)"
+
+            if [[ -n "$FRONTEND_IP" || -n "$FRONTEND_HOSTNAME" ]]; then
+              break
+            fi
+
+            sleep 10
+          done
+
+          if [[ -n "$FRONTEND_IP" ]]; then
+            FRONTEND_ENDPOINT="$FRONTEND_IP"
+          else
+            FRONTEND_ENDPOINT="$FRONTEND_HOSTNAME"
+          fi
+
+          if [[ -z "$FRONTEND_ENDPOINT" ]]; then
+            echo "##vso[task.logissue type=error]Frontend LoadBalancer endpoint was not assigned in time."
+            exit 1
+          fi
+
+          echo "##vso[task.setvariable variable=FRONTEND_ENDPOINT]$FRONTEND_ENDPOINT"
+          echo "Frontend endpoint: $FRONTEND_ENDPOINT"
+
+    - bash: |
+        set -euo pipefail
+        echo "Deployment completed."
+        echo "Public app endpoint: http://$(FRONTEND_ENDPOINT)"
+
+        if [[ -n "${{ parameters.domainName }}" ]]; then
+          echo "Map DNS for your domain:"
+          echo "  Host: ${{ parameters.domainName }}"
+          echo "  Target: $(FRONTEND_ENDPOINT)"
+          echo "  Type: A record (if endpoint is IP) or CNAME (if endpoint is hostname)"
+          echo "After DNS propagation, open: http://${{ parameters.domainName }}"
+        else
+          echo "No domainName provided. Add an A record to point your domain to $(FRONTEND_ENDPOINT)."
+        fi
+      displayName: Print endpoint and domain mapping info
