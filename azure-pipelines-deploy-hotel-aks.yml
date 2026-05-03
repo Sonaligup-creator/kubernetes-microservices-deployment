@@ -37,7 +37,7 @@ parameters:
 - name: nodePoolMaxCount
   displayName: User Node Pool Max Count
   type: number
-  default: 5
+  default: 2
 
 - name: scaleNodePool
   displayName: Scale user node pool before deploy
