@@ -44,6 +44,16 @@ parameters:
   type: boolean
   default: true
 
+- name: namespace
+  displayName: Kubernetes Namespace
+  type: string
+  default: hotel-res
+
+- name: domainName
+  displayName: Domain (optional, e.g. app.example.com)
+  type: string
+  default: "hotelreservationweb.me"
+
 variables:
 - name: ACR_LOGIN_SERVER
   value: microservicesdevcindpu6.azurecr.io
@@ -67,16 +77,6 @@ variables:
   value: rg-microservices-dev-cin-dpu6
 - name: VNET_NAME
   value: vnet-microservices-dev-cin-dpu6
-
-- name: namespace
-  displayName: Kubernetes Namespace
-  type: string
-  default: hotel-res
-
-- name: domainName
-  displayName: Domain (optional, e.g. app.example.com)
-  type: string
-  default: "hotelreservationweb.me"
 
 stages:
 - stage: DeployHotelReservation

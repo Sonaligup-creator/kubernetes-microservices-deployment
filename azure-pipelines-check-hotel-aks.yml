@@ -44,6 +44,11 @@ parameters:
   type: boolean
   default: true
 
+- name: namespace
+  displayName: Kubernetes Namespace
+  type: string
+  default: hotel-res
+
 variables:
 - name: ACR_LOGIN_SERVER
   value: microservicesdevcindpu6.azurecr.io
@@ -67,11 +72,6 @@ variables:
   value: rg-microservices-dev-cin-dpu6
 - name: VNET_NAME
   value: vnet-microservices-dev-cin-dpu6
-
-- name: namespace
-  displayName: Kubernetes Namespace
-  type: string
-  default: hotel-res
 
 stages:
 - stage: CheckHotelReservation
