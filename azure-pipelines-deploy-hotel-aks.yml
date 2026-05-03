@@ -129,7 +129,9 @@ stages:
 
           echo "Using node pool: $NODEPOOL_NAME"
 
-          if [[ "${{ parameters.scaleNodePool }}" == "true" ]]; then
+          SCALE_NODEPOOL="${{ parameters.scaleNodePool }}"
+          echo "scaleNodePool=$SCALE_NODEPOOL"
+          if [[ "${SCALE_NODEPOOL,,}" == "true" ]]; then
             az aks nodepool update \
               --resource-group "${{ parameters.clusterResourceGroup }}" \
               --cluster-name "${{ parameters.clusterName }}" \
@@ -181,7 +183,7 @@ stages:
             --name "${{ parameters.clusterName }}" \
             --overwrite-existing
 
-          if [[ "${{ parameters.scaleNodePool }}" == "true" ]]; then
+          if [[ "${SCALE_NODEPOOL,,}" == "true" ]]; then
             READY_TIMEOUT_MINUTES=10
             READY_WAIT_SECONDS=15
             READY_ATTEMPTS=$((READY_TIMEOUT_MINUTES * 60 / READY_WAIT_SECONDS))

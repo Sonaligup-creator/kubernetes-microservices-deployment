@@ -123,7 +123,9 @@ stages:
 
           echo "Using node pool: $NODEPOOL_NAME"
 
-          if [[ "${{ parameters.scaleNodePool }}" == "true" ]]; then
+          SCALE_NODEPOOL="${{ parameters.scaleNodePool }}"
+          echo "scaleNodePool=$SCALE_NODEPOOL"
+          if [[ "${SCALE_NODEPOOL,,}" == "true" ]]; then
             az aks nodepool update \
               --resource-group "${{ parameters.clusterResourceGroup }}" \
               --cluster-name "${{ parameters.clusterName }}" \
