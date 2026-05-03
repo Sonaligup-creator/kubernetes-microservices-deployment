@@ -19,6 +19,31 @@ parameters:
   type: string
   default: aks-microservices-dev-cin-dpu6
 
+- name: nodePoolName
+  displayName: AKS User Node Pool Name
+  type: string
+  default: user
+
+- name: nodePoolDesiredCount
+  displayName: User Node Pool Desired Node Count
+  type: number
+  default: 2
+
+- name: nodePoolMinCount
+  displayName: User Node Pool Min Count
+  type: number
+  default: 2
+
+- name: nodePoolMaxCount
+  displayName: User Node Pool Max Count
+  type: number
+  default: 5
+
+- name: scaleNodePool
+  displayName: Scale user node pool before validation
+  type: boolean
+  default: true
+
 - name: namespace
   displayName: Kubernetes Namespace
   type: string
@@ -43,6 +68,21 @@ stages:
         scriptLocation: inlineScript
         inlineScript: |
           set -euo pipefail
+          if [[ "${{ parameters.scaleNodePool }}" == "true" ]]; then
+            az aks nodepool update \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --name "${{ parameters.nodePoolName }}" \
+              --enable-cluster-autoscaler \
+              --min-count "${{ parameters.nodePoolMinCount }}" \
+              --max-count "${{ parameters.nodePoolMaxCount }}"
+
+            az aks nodepool scale \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --name "${{ parameters.nodePoolName }}" \
+              --node-count "${{ parameters.nodePoolDesiredCount }}"
+          fi
           chmod +x scripts/check-hotel-aks.sh
           ./scripts/check-hotel-aks.sh \
             "${{ parameters.clusterResourceGroup }}" \
