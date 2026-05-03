@@ -93,6 +93,19 @@ stages:
         inlineScript: |
           set -euo pipefail
 
+          echo "Checking compute quota in ${{ variables.LOCATION }}..."
+          az vm list-usage \
+            --location "${{ variables.LOCATION }}" \
+            --query "[?contains(to_lower(name.value), 'dsv3') || contains(to_lower(name.value), 'd2s') || contains(to_lower(name.value), 'totalregionalvcpus')].{name:name.localizedValue, currentValue:currentValue, limit:limit}" \
+            -o table
+
+          echo "Checking SKU availability for Standard_D2s_v3 in ${{ variables.LOCATION }}..."
+          az vm list-skus \
+            --location "${{ variables.LOCATION }}" \
+            --size Standard_D2s_v3 \
+            --query "[].{name:name, restrictions:restrictions}" \
+            -o table
+
           az aks nodepool list \
             --resource-group "${{ parameters.clusterResourceGroup }}" \
             --cluster-name "${{ parameters.clusterName }}" \
