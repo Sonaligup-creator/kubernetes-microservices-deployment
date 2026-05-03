@@ -143,12 +143,59 @@ stages:
               --cluster-name "${{ parameters.clusterName }}" \
               --name "$NODEPOOL_NAME" \
               --node-count "${{ parameters.nodePoolDesiredCount }}"
+
+            DESIRED_COUNT="${{ parameters.nodePoolDesiredCount }}"
+            SCALE_TIMEOUT_MINUTES=15
+            SCALE_WAIT_SECONDS=20
+            MAX_ATTEMPTS=$((SCALE_TIMEOUT_MINUTES * 60 / SCALE_WAIT_SECONDS))
+
+            for _ in $(seq 1 "$MAX_ATTEMPTS"); do
+              CURRENT_COUNT="$(az aks nodepool show \
+                --resource-group "${{ parameters.clusterResourceGroup }}" \
+                --cluster-name "${{ parameters.clusterName }}" \
+                --name "$NODEPOOL_NAME" \
+                --query "count" -o tsv)"
+              PROVISIONING_STATE="$(az aks nodepool show \
+                --resource-group "${{ parameters.clusterResourceGroup }}" \
+                --cluster-name "${{ parameters.clusterName }}" \
+                --name "$NODEPOOL_NAME" \
+                --query "provisioningState" -o tsv)"
+
+              if [[ -n "$CURRENT_COUNT" && "$CURRENT_COUNT" -ge "$DESIRED_COUNT" && "$PROVISIONING_STATE" == "Succeeded" ]]; then
+                echo "Node pool scaled to $CURRENT_COUNT nodes."
+                break
+              fi
+
+              echo "Waiting for node pool to scale (current=$CURRENT_COUNT, desired=$DESIRED_COUNT, state=$PROVISIONING_STATE)..."
+              sleep "$SCALE_WAIT_SECONDS"
+            done
+
+            if [[ -z "$CURRENT_COUNT" || "$CURRENT_COUNT" -lt "$DESIRED_COUNT" ]]; then
+              echo "##vso[task.logissue type=error]Node pool did not scale to desired count in time."
+              exit 1
+            fi
           fi
 
           az aks get-credentials \
             --resource-group "${{ parameters.clusterResourceGroup }}" \
             --name "${{ parameters.clusterName }}" \
             --overwrite-existing
+
+          if [[ "${{ parameters.scaleNodePool }}" == "true" ]]; then
+            READY_TIMEOUT_MINUTES=10
+            READY_WAIT_SECONDS=15
+            READY_ATTEMPTS=$((READY_TIMEOUT_MINUTES * 60 / READY_WAIT_SECONDS))
+
+            for _ in $(seq 1 "$READY_ATTEMPTS"); do
+              READY_NODES="$(kubectl get nodes -l agentpool="$NODEPOOL_NAME" --no-headers 2>/dev/null | awk '$2=="Ready"' | wc -l | tr -d ' ')"
+              if [[ -n "$READY_NODES" && "$READY_NODES" -ge "$DESIRED_COUNT" ]]; then
+                echo "User node pool has $READY_NODES Ready nodes."
+                break
+              fi
+              echo "Waiting for Ready nodes in pool $NODEPOOL_NAME (ready=$READY_NODES, desired=$DESIRED_COUNT)..."
+              sleep "$READY_WAIT_SECONDS"
+            done
+          fi
 
           kubectl create namespace "${{ parameters.namespace }}" --dry-run=client -o yaml | kubectl apply -f -
 
