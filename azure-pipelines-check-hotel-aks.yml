@@ -92,11 +92,42 @@ stages:
         scriptLocation: inlineScript
         inlineScript: |
           set -euo pipefail
+
+          az aks nodepool list \
+            --resource-group "${{ parameters.clusterResourceGroup }}" \
+            --cluster-name "${{ parameters.clusterName }}" \
+            -o table
+
+          NODEPOOL_NAME="${{ parameters.nodePoolName }}"
+          if [[ -n "$NODEPOOL_NAME" ]]; then
+            if ! az aks nodepool show \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --name "$NODEPOOL_NAME" >/dev/null 2>&1; then
+              echo "##vso[task.logissue type=warning]Node pool '$NODEPOOL_NAME' not found. Auto-detecting a user pool."
+              NODEPOOL_NAME=""
+            fi
+          fi
+
+          if [[ -z "$NODEPOOL_NAME" ]]; then
+            NODEPOOL_NAME="$(az aks nodepool list \
+              --resource-group "${{ parameters.clusterResourceGroup }}" \
+              --cluster-name "${{ parameters.clusterName }}" \
+              --query "[?mode=='User'].name | [0]" -o tsv)"
+          fi
+
+          if [[ -z "$NODEPOOL_NAME" ]]; then
+            echo "##vso[task.logissue type=error]No user node pool found to scale."
+            exit 1
+          fi
+
+          echo "Using node pool: $NODEPOOL_NAME"
+
           if [[ "${{ parameters.scaleNodePool }}" == "true" ]]; then
             az aks nodepool update \
               --resource-group "${{ parameters.clusterResourceGroup }}" \
               --cluster-name "${{ parameters.clusterName }}" \
-              --name "${{ parameters.nodePoolName }}" \
+              --name "$NODEPOOL_NAME" \
               --enable-cluster-autoscaler \
               --min-count "${{ parameters.nodePoolMinCount }}" \
               --max-count "${{ parameters.nodePoolMaxCount }}"
@@ -104,7 +135,7 @@ stages:
             az aks nodepool scale \
               --resource-group "${{ parameters.clusterResourceGroup }}" \
               --cluster-name "${{ parameters.clusterName }}" \
-              --name "${{ parameters.nodePoolName }}" \
+              --name "$NODEPOOL_NAME" \
               --node-count "${{ parameters.nodePoolDesiredCount }}"
           fi
           chmod +x scripts/check-hotel-aks.sh
